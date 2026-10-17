@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+
+# Local models, media and generated outputs
+models/
+videos/
+*.mp4
+*.mkv
+*.mov
+*.wav
+*_transcript.txt
+*_subtitles.srt
+
+# Editors
+.vscode/
+.idea/
+\n# ProntoFix runtime data (never commit videos, models, transcripts or database)\ndata/\n

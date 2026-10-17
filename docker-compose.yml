@@ -1,0 +1,19 @@
+services:
+  prontofix:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    container_name: prontofix
+    restart: unless-stopped
+    ports:
+      - "8787:8000"
+    environment:
+      PRONTOFIX_DATA: /data
+      WHISPER_MODEL: small
+      CPU_THREADS: "4"
+      # Piper is installed; add a compatible voice model and uncomment:
+      # PIPER_MODEL: /voices/voice.onnx
+      # PIPER_BIN: piper
+    volumes:
+      - ./data:/data
+      # - ./voices:/voices:ro
