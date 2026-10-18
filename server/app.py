@@ -238,7 +238,8 @@ def download(job_id:str,kind:str):
     keys={"transcript":"transcript","original-srt":"original_srt","translated-transcript":"translated_transcript","translated-srt":"translated_srt","translated-audio":"translated_audio","dubbed-video":"dubbed_video"}
     path=j.get("result",{}).get(keys.get(kind,""))
     if not path or not Path(path).is_file():raise HTTPException(404,"Результат пока недоступен")
-    return FileResponse(path,filename=Path(path).name)
+    media_types={"dubbed-video":"video/mp4","translated-audio":"audio/wav","transcript":"text/plain; charset=utf-8","translated-transcript":"text/plain; charset=utf-8","original-srt":"application/x-subrip; charset=utf-8","translated-srt":"application/x-subrip; charset=utf-8"}
+    return FileResponse(path,filename=Path(path).name,media_type=media_types.get(kind,"application/octet-stream"),content_disposition_type="inline" if kind=="dubbed-video" else "attachment")
 @app.patch("/api/jobs/{job_id}/transcript")
 def edit(job_id:str,data:TranscriptEdit):
     j=getjob(job_id)
