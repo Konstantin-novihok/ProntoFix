@@ -128,6 +128,24 @@ def complete(upload_id:str,data:Complete):
         with dbconn() as c:c.execute("INSERT INTO jobs(id,filename,input_path,source_lang,target_lang,status,progress,message,created,updated) VALUES(?,?,?,?,?,'queued',0,'В очереди',?,?)",(jid,name,str(dest),sl,tl,now,now))
         return {"id":jid,"status":"queued","filename":name}
     except Exception:dest.unlink(missing_ok=True); raise
+@app.delete("/api/jobs/{job_id}")
+def delete_job(job_id:str):
+    j=getjob(job_id)
+    if not j:
+        raise HTTPException(404,"Задача не найдена")
+    if j["status"]=="processing":
+        raise HTTPException(409,"Нельзя удалить задачу во время обработки")
+    input_path=Path(j["input_path"]).resolve()
+    incoming=(DATA/"incoming").resolve()
+    if input_path.parent==incoming and input_path.is_file():
+        input_path.unlink(missing_ok=True)
+    work=(JOBS/job_id).resolve()
+    if work.parent==JOBS.resolve() and work.is_dir():
+        shutil.rmtree(work,ignore_errors=True)
+    with dbconn() as c:
+        c.execute("DELETE FROM jobs WHERE id=?",(job_id,))
+    return {"status":"deleted","id":job_id}
+
 @app.get("/api/jobs/{job_id}")
 def detail(job_id:str):
     j=getjob(job_id)
