@@ -60,6 +60,44 @@ def translate(text,src,dst):
 def duration(path):
     out=cmd(["ffprobe","-v","error","-show_entries","format=duration","-of","default=noprint_wrappers=1:nokey=1",str(path)])
     return max(.1,float(out.stdout.strip()))
+
+def piper_models():
+    try:
+        configured=json.loads(os.getenv("PIPER_MODELS","{}"))
+        if not isinstance(configured,dict): configured={}
+    except (TypeError,json.JSONDecodeError): configured={}
+    if PIPER_MODEL: configured.setdefault("en",PIPER_MODEL)
+    return {str(k):str(v) for k,v in configured.items() if v}
+
+def make_dub(rows, model_path, work, video_path):
+    clips=[]
+    for i,row in enumerate(rows):
+        text=row["text"].strip()
+        if not text: continue
+        raw=work/f"speech_{i:04d}.wav"
+        proc=subprocess.run([PIPER,"--model",model_path,"--output_file",str(raw)],input=text,text=True,capture_output=True)
+        if proc.returncode:
+            detail=(proc.stderr or proc.stdout or "Piper завершился с ошибкой").strip()
+            raise RuntimeError(f"Синтез сегмента {i+1} не удался: {detail[-1200:]}")
+        start=max(0.0,float(row["start"])); end=max(start+0.12,float(row["end"]))
+        clips.append((raw,start,end))
+    if not clips: raise RuntimeError("Нет текста для синтеза речи.")
+    graph=[]; labels=[]; args=["ffmpeg","-nostdin","-y","-i",str(video_path)]
+    for path,start,end in clips: args += ["-i",str(path)]
+    for n,(path,start,end) in enumerate(clips, start=1):
+        target=max(.12,end-start); ratio=duration(path)/target; tempos=[]
+        while ratio>2.0: tempos.append(2.0); ratio/=2.0
+        while ratio<0.5: tempos.append(0.5); ratio/=0.5
+        tempos.append(ratio)
+        chain=",".join([f"atempo={x:.6f}" for x in tempos]+[f"apad=pad_dur={target:.3f}",f"atrim=duration={target:.3f}",f"adelay={round(start*1000)}:all=1"])
+        label=f"a{n}"; graph.append(f"[{n}:a]{chain}[{label}]"); labels.append(f"[{label}]")
+    graph.append("".join(labels)+f"amix=inputs={len(labels)}:duration=longest:normalize=0,alimiter=limit=0.95[dub]")
+    out=work/"video_translated_audio.mp4"
+    args += ["-filter_complex",";".join(graph),"-map","0:v:0","-map","[dub]","-c:v","copy","-c:a","aac","-b:a","192k","-t",f"{duration(video_path):.3f}","-movflags","+faststart",str(out)]
+    cmd(args)
+    audio=work/"translated.wav"
+    cmd(["ffmpeg","-nostdin","-y","-i",str(out),"-vn","-ac","1","-ar","22050","-c:a","pcm_s16le",str(audio)])
+    return audio,out
 def process(j):
     jid=j["id"]; src=Path(j["input_path"]); work=JOBS/jid; work.mkdir(parents=True,exist_ok=True)
     try:
@@ -82,13 +120,14 @@ def process(j):
         txt=work/"transcript_translated.txt"; subs=work/"subtitles_translated.srt"
         txt.write_text("\n".join(r["text"] for r in translated)+"\n",encoding="utf-8"); subs.write_text(srt(translated),encoding="utf-8")
         result={"source_language":source_lang,"detected_language":info.language,"target_language":target_lang,"segments":len(rows),"transcript":str(orig),"original_srt":str(osrt),"translated_transcript":str(txt),"translated_srt":str(subs)}
-        if PIPER_MODEL and shutil.which(PIPER):
-            voice=work/"translated.wav"; spoken="\n".join(r["text"] for r in translated)
-            subprocess.run([PIPER,"--model",PIPER_MODEL,"--output_file",str(voice)],input=spoken,text=True,check=True,capture_output=True)
-            out=work/"video_translated_audio.mp4"; dur=duration(src)
-            cmd(["ffmpeg","-nostdin","-y","-i",str(src),"-i",str(voice),"-map","0:v:0","-map","1:a:0","-c:v","copy","-c:a","aac","-af","apad","-t",f"{dur:.3f}","-movflags","+faststart",str(out)])
-            result.update({"translated_audio":str(voice),"dubbed_video":str(out)})
-        else:result["tts_warning"]="Для озвучивания установите Piper, совместимую голосовую модель и переменную PIPER_MODEL."
+        models=piper_models()
+        if shutil.which(PIPER) and target_lang in models and Path(models[target_lang]).is_file():
+            update(jid,progress=84,message=f"Синтез речи: {LANGS.get(target_lang,target_lang)}")
+            voice,out=make_dub(translated,models[target_lang],work,src)
+            result.update({"translated_audio":str(voice),"dubbed_video":str(out),"tts_voice_language":target_lang,"dubbing_mode":"segment_aligned"})
+        else:
+            available=", ".join(sorted(k for k,p in models.items() if Path(p).is_file())) or "нет"
+            result["tts_warning"]=f"Нет настроенной голосовой модели Piper для языка {target_lang}. Настроены языки: {available}."
         update(jid,status="done",progress=100,message="Готово",result_json=json.dumps(result,ensure_ascii=False))
     except Exception as e:update(jid,status="error",progress=0,message=str(e))
 def worker():
@@ -109,7 +148,9 @@ class Complete(BaseModel):
 class TranscriptEdit(BaseModel):
     text:str=Field(max_length=20000000); translated:bool=False
 @app.get("/api/health")
-def health():return {"status":"ok","languages":LANGS,"whisper_model":MODEL,"tts_enabled":bool(PIPER_MODEL)}
+def health():
+    models=piper_models()
+    return {"status":"ok","languages":LANGS,"whisper_model":MODEL,"tts_enabled":bool(shutil.which(PIPER) and any(Path(p).is_file() for p in models.values())),"tts_languages":sorted(k for k,p in models.items() if Path(p).is_file())}
 @app.get("/api/jobs")
 def list_jobs():
     with dbconn() as c:ids=[r["id"] for r in c.execute("SELECT id FROM jobs ORDER BY created DESC LIMIT 100")]
