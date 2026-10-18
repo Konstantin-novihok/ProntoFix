@@ -41,12 +41,22 @@ def srt(rows):
 def translate(text,src,dst):
     if src==dst:return text
     try:
-        import argostranslate.translate
-        out=argostranslate.translate.translate(text,src,dst)
+        import argostranslate.translate as argos
+        languages={lang.code:lang for lang in argos.get_installed_languages()}
+        from_lang=languages.get(src)
+        to_lang=languages.get(dst)
+        if from_lang is None or to_lang is None:
+            installed=", ".join(sorted(languages))
+            raise RuntimeError(f"Язык {src if from_lang is None else dst} не найден среди установленных Argos. Доступны: {installed}")
+        translation=next((tr for tr in from_lang.translations_from if tr.to_lang.code==dst),None)
+        if translation is None:
+            raise RuntimeError(f"Не установлена языковая пара Argos Translate: {src} → {dst}.")
+        out=translation.translate(text)
+        if out and out.strip():return out.strip()
+        raise RuntimeError(f"Argos Translate вернул пустой перевод для {src} → {dst}.")
     except Exception as e:
+        if isinstance(e,RuntimeError):raise
         raise RuntimeError(f"Ошибка Argos Translate при переводе {src} → {dst}: {type(e).__name__}: {e}") from e
-    if out and out.strip():return out.strip()
-    raise RuntimeError(f"Argos Translate вернул пустой перевод для {src} → {dst}.")
 def duration(path):
     out=cmd(["ffprobe","-v","error","-show_entries","format=duration","-of","default=noprint_wrappers=1:nokey=1",str(path)])
     return max(.1,float(out.stdout.strip()))
