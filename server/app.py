@@ -146,6 +146,34 @@ def delete_job(job_id:str):
         c.execute("DELETE FROM jobs WHERE id=?",(job_id,))
     return {"status":"deleted","id":job_id}
 
+@app.post("/api/jobs/{job_id}/retry")
+def retry_job(job_id:str):
+    j=getjob(job_id)
+    if not j: raise HTTPException(404,"Задача не найдена")
+    if j["status"] in ("queued","processing"): raise HTTPException(409,"Задача уже в очереди или обрабатывается")
+    source=Path(j["input_path"]).resolve()
+    if not source.is_file(): raise HTTPException(404,"Исходный видеофайл отсутствует на сервере")
+    work=(JOBS/job_id).resolve()
+    if work.parent==JOBS.resolve() and work.is_dir():
+        for child in work.iterdir():
+            if child.name=="thumbnail.jpg": continue
+            if child.is_dir(): shutil.rmtree(child,ignore_errors=True)
+            else: child.unlink(missing_ok=True)
+    with dbconn() as c: c.execute("UPDATE jobs SET status='queued',progress=0,message='Повторно поставлено в очередь',result_json='{}',updated=? WHERE id=?",(time.time(),job_id))
+    return {"id":job_id,"status":"queued"}
+
+@app.get("/api/jobs/{job_id}/thumbnail")
+def thumbnail(job_id:str):
+    j=getjob(job_id)
+    if not j: raise HTTPException(404,"Задача не найдена")
+    thumb=JOBS/job_id/"thumbnail.jpg"
+    if not thumb.is_file():
+        source=Path(j["input_path"])
+        if not source.is_file(): raise HTTPException(404,"Исходное видео отсутствует")
+        thumb.parent.mkdir(parents=True,exist_ok=True)
+        try: subprocess.run(["ffmpeg","-nostdin","-y","-ss","1","-i",str(source),"-frames:v","1","-vf","scale=480:-2","-q:v","4",str(thumb)],check=True,capture_output=True,timeout=30)
+        except Exception: raise HTTPException(404,"Не удалось создать миниатюру видео")
+    return FileResponse(thumb,media_type="image/jpeg",headers={"Cache-Control":"no-store"})
 @app.get("/api/jobs/{job_id}")
 def detail(job_id:str):
     j=getjob(job_id)
