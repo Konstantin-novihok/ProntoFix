@@ -54,7 +54,7 @@ class MainActivity : ComponentActivity() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                 val uri = request.url
                 // Keep navigation inside the configured server; open external sites in the browser.
-                val base = serverUrl().toUri()
+                val base = Uri.parse(serverUrl())
                 return if (uri.host == base.host && uri.scheme == base.scheme) {
                     false
                 } else {
