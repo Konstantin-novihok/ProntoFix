@@ -1,2 +1,4 @@
 # ProntoFix dependencies
 faster-whisper>=1.1,<2.0
+# faster-whisper uses metadata_errors when opening media; keep PyAV new enough.
+av>=14.0.0
