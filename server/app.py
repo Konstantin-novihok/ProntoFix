@@ -14,7 +14,7 @@ MODEL=os.getenv("WHISPER_MODEL","small"); THREADS=max(1,int(os.getenv("CPU_THREA
 PIPER=os.getenv("PIPER_BIN","piper"); PIPER_MODEL=os.getenv("PIPER_MODEL","")
 LANGS={"uk":"Українська","ru":"Русский","de":"Deutsch","fr":"Français","it":"Italiano","en":"English","ar":"العربية","pt":"Português","es":"Español","bg":"Български","pl":"Polski","cs":"Čeština","sk":"Slovenčina","lt":"Lietuvių","lv":"Latviešu","no":"Norsk"}
 app=FastAPI(title="ProntoFix API",version="0.1.0")
-WEB_DIR=Path("/app/web")
+WEB_DIR=Path(__file__).resolve().parent.parent/"web"
 app.add_middleware(CORSMiddleware,allow_origins=os.getenv("CORS_ORIGINS","*").split(","),allow_credentials=False,allow_methods=["*"],allow_headers=["*"])
 
 def dbconn():
