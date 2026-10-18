@@ -43,9 +43,10 @@ def translate(text,src,dst):
     try:
         import argostranslate.translate
         out=argostranslate.translate.translate(text,src,dst)
-        if out and out.strip():return out.strip()
-    except Exception:pass
-    raise RuntimeError(f"Не установлена языковая пара Argos Translate: {src} → {dst}. Установите модель перевода для этого направления.")
+    except Exception as e:
+        raise RuntimeError(f"Ошибка Argos Translate при переводе {src} → {dst}: {type(e).__name__}: {e}") from e
+    if out and out.strip():return out.strip()
+    raise RuntimeError(f"Argos Translate вернул пустой перевод для {src} → {dst}.")
 def duration(path):
     out=cmd(["ffprobe","-v","error","-show_entries","format=duration","-of","default=noprint_wrappers=1:nokey=1",str(path)])
     return max(.1,float(out.stdout.strip()))
