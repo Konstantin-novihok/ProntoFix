@@ -228,7 +228,9 @@ def delete_job(job_id:str):
         raise HTTPException(409,"Нельзя удалить задачу во время обработки")
     input_path=Path(j["input_path"]).resolve()
     incoming=(DATA/"incoming").resolve()
-    if input_path.parent==incoming and input_path.is_file():
+    with dbconn() as c:
+        references=c.execute("SELECT COUNT(*) FROM jobs WHERE input_path=? AND id<>?",(str(input_path),job_id)).fetchone()[0]
+    if references==0 and input_path.parent==incoming and input_path.is_file():
         input_path.unlink(missing_ok=True)
     # Remove only this job's predictable MP4 stored beside the source.
     result_video=j.get("result",{}).get("dubbed_video")
