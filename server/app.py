@@ -101,9 +101,12 @@ def make_dub(rows, model_path, work, video_path):
         filters += [f"adelay={round(start*1000)}:all=1"]
         chain=",".join(filters)
         label=f"a{n}"; graph.append(f"[{n}:a]{chain}[{label}]"); labels.append(f"[{label}]")
-    graph.append("".join(labels)+f"amix=inputs={len(labels)}:duration=longest:normalize=0,alimiter=limit=0.95[dub]")
+    # Keep the original soundtrack as ambience/music and mix translated speech over it.
+    # This ducks the original track during speech; perfect voice removal requires source separation.
+    graph.append("[0:a]aresample=48000,asetpts=PTS-STARTPTS,volume=0.30[bg];" + "".join(labels) + f"amix=inputs={len(labels)}:duration=longest:normalize=0,alimiter=limit=0.95[voice];" + "[bg][voice]sidechaincompress=threshold=0.025:ratio=8:attack=15:release=350[ducked];" + "[ducked][voice]amix=inputs=2:duration=longest:weights='1 1':normalize=0,alimiter=limit=0.95[dub]")
     out=work/"video_translated_audio.mp4"
-    args += ["-filter_complex",";".join(graph),"-map","0:v:0","-map","[dub]","-c:v","libx264","-preset","veryfast","-crf","23","-pix_fmt","yuv420p","-c:a","aac","-b:a","192k","-t",f"{duration(video_path):.3f}","-movflags","+faststart",str(out)]
+    output_duration=max(duration(video_path),max(start+duration(path) for path,start,end in clips))
+    args += ["-filter_complex",";".join(graph),"-map","0:v:0","-map","[dub]","-c:v","libx264","-preset","veryfast","-crf","23","-pix_fmt","yuv420p","-c:a","aac","-b:a","192k","-t",f"{output_duration:.3f}","-shortest","-movflags","+faststart",str(out)]
     cmd(args)
     audio=work/"translated.wav"
     cmd(["ffmpeg","-nostdin","-y","-i",str(out),"-vn","-ac","1","-ar","22050","-c:a","pcm_s16le",str(audio)])
