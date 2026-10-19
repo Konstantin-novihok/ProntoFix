@@ -215,6 +215,13 @@ def delete_job(job_id:str):
     incoming=(DATA/"incoming").resolve()
     if input_path.parent==incoming and input_path.is_file():
         input_path.unlink(missing_ok=True)
+    # Remove only this job's predictable MP4 stored beside the source.
+    result_video=j.get("result",{}).get("dubbed_video")
+    if result_video:
+        output_path=Path(result_video).resolve()
+        expected_name=input_path.stem+"_ProntoFix_"+job_id[:8]+".mp4"
+        if output_path.parent==input_path.parent and output_path.name==expected_name:
+            output_path.unlink(missing_ok=True)
     work=(JOBS/job_id).resolve()
     if work.parent==JOBS.resolve() and work.is_dir():
         shutil.rmtree(work,ignore_errors=True)
