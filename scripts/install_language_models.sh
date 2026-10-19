@@ -63,28 +63,41 @@ PY
 "$VENV/bin/python" - "$VOICE_DIR" "$LANG_CODES" <<'PY'
 import json, os, sys, urllib.request, urllib.error, pathlib, time
 dest=pathlib.Path(sys.argv[1]); wanted=set(sys.argv[2].split())
-api="https://huggingface.co/api/models/rhasspy/piper-voices/tree/main?recursive=true&expand=false"
-print("\nFetching Piper voice inventory from Hugging Face...", flush=True)
-req=urllib.request.Request(api,headers={"User-Agent":"ProntoFix-language-installer/1.0"})
-with urllib.request.urlopen(req,timeout=60) as r: entries=json.load(r)
-paths=[x.get("path","") for x in entries if x.get("type")=="file"]
-# Directory layout: locale/voice/quality/locale-voice-quality.onnx
+api="https://huggingface.co/api/models/rhasspy/piper-voices/tree/main?recursive=true&expand=false&limit=1000"
+print("\nFetching complete Piper voice inventory from Hugging Face...", flush=True)
+paths=[]
+page_count=0
+while api:
+    req=urllib.request.Request(api,headers={"User-Agent":"ProntoFix-language-installer/1.0"})
+    with urllib.request.urlopen(req,timeout=60) as response:
+        entries=json.load(response)
+        link=response.headers.get("Link","")
+    paths.extend(x.get("path","") for x in entries if x.get("type")=="file")
+    page_count += 1
+    import re
+    match=re.search(r'<([^>]+)>\\s*;\\s*rel="next"',link)
+    api=match.group(1) if match else None
+    print(f"Inventory page {page_count}: {len(paths)} files indexed",flush=True)
+print("Total remote files indexed:",len(paths),flush=True)
+# Current layout: language/locale/voice/quality/model.onnx
 locales={"uk":"uk_UA","ru":"ru_RU","de":"de_DE","fr":"fr_FR","it":"it_IT",
          "en":"en_US","ar":"ar_JO","pt":"pt_PT","es":"es_ES","bg":"bg_BG",
          "pl":"pl_PL","cs":"cs_CZ","sk":"sk_SK","lt":"lt_LT","lv":"lv_LV","no":"no_NO"}
+# Prefer medium, then low, x_low, and finally high quality.
 rank={"medium":0,"low":1,"x_low":2,"high":3}
 installed=[]; missing=[]
 for code in sorted(wanted):
     locale=locales[code]
     candidates=[]
-    prefix=locale+"/"
     for p in paths:
-        if not p.startswith(prefix) or not p.endswith(".onnx"): continue
+        if not p.endswith(".onnx"): continue
         parts=p.split("/")
-        if len(parts)!=4: continue
-        quality=parts[2]
-        if quality not in rank: continue
-        candidates.append((rank[quality],p))
+        if len(parts)!=5: continue
+        language_dir, model_locale, voice, quality, filename=parts
+        if language_dir != code or quality not in rank: continue
+        # These UI languages have multiple useful regional variants in Piper.
+        if code not in {"en","pt","es"} and model_locale != locale: continue
+        candidates.append((rank[quality], 0 if model_locale == locale else 1, p))
     candidates.sort()
     if not candidates:
         missing.append((code,locale))
@@ -92,10 +105,11 @@ for code in sorted(wanted):
         continue
     # One default voice per UI language, medium preferred. If a voice already
     # exists and its ONNX/config pair is complete, leave it untouched.
-    chosen=candidates[0][1]
+    chosen=candidates[0][2]
     rel=pathlib.PurePosixPath(chosen)
     base=rel.name[:-5]
-    folder=dest/locale/rel.parts[1]/rel.parts[2]
+    model_locale=rel.parts[1]
+    folder=dest/model_locale/rel.parts[2]/rel.parts[3]
     folder.mkdir(parents=True,exist_ok=True)
     files=[(chosen,folder/(base+".onnx")),(chosen+".json",folder/(base+".onnx.json"))]
     ok=True
@@ -126,8 +140,8 @@ for code in sorted(wanted):
                 request=urllib.request.Request(card_url,headers={"User-Agent":"ProntoFix-language-installer/1.0"})
                 with urllib.request.urlopen(request,timeout=60) as response, open(card,"wb") as out: out.write(response.read())
             except Exception as e: print(f"NOTICE: couldn't fetch model card for {base}: {e}",flush=True)
-        installed.append((code,str(folder/base)))
-        print(f"VOICE OK {code}: {folder/base}",flush=True)
+        installed.append((code,str(folder/(base+".onnx"))))
+        print(f"VOICE OK {code}: {folder/(base+'.onnx')}",flush=True)
 print("\nPIPER SUMMARY")
 for code,path in installed: print("VOICE",code,path)
 for code,locale in missing: print("UNSUPPORTED",code,locale)
@@ -139,11 +153,19 @@ PY
 "$VENV/bin/python" - "$VOICE_DIR" <<'PY'
 import json, pathlib, sys
 root=pathlib.Path(sys.argv[1]); mapping={}
-for code,locale in {"uk":"uk_UA","ru":"ru_RU","de":"de_DE","fr":"fr_FR","it":"it_IT","en":"en_US","ar":"ar_JO","pt":"pt_PT","es":"es_ES","bg":"bg_BG","pl":"pl_PL","cs":"cs_CZ","sk":"sk_SK","lt":"lt_LT","lv":"lv_LV","no":"no_NO"}.items():
-    candidates=sorted(root.glob(locale+"/*/*/*.onnx"))
+locale_by_code={"uk":"uk_UA","ru":"ru_RU","de":"de_DE","fr":"fr_FR","it":"it_IT","en":"en_US","ar":"ar_JO","pt":"pt_PT","es":"es_ES","bg":"bg_BG","pl":"pl_PL","cs":"cs_CZ","sk":"sk_SK","lt":"lt_LT","lv":"lv_LV","no":"no_NO"}
+for code,locale in locale_by_code.items():
+    candidates=[]
+    for model in root.glob("*/*/*/*.onnx"):
+        if not pathlib.Path(str(model)+".json").is_file(): continue
+        parts=model.relative_to(root).parts
+        if len(parts)!=4: continue
+        model_locale=parts[0]
+        if model_locale == locale or (code in {"en","pt","es"} and model_locale.split("_",1)[0] == code):
+            candidates.append(model)
     if candidates:
-        model=candidates[0]
-        if pathlib.Path(str(model)+".json").exists(): mapping[code]=str(model)
+        candidates.sort(key=lambda model: (0 if model.relative_to(root).parts[0] == locale else 1, str(model)))
+        mapping[code]=str(candidates[0])
 path=pathlib.Path("/var/lib/prontofix/piper-models.json")
 path.write_text(json.dumps(mapping,ensure_ascii=False,indent=2)+"\n",encoding="utf-8")
 print("\nPIPER_MODELS map written:",path)
