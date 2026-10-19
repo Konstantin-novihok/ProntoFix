@@ -86,8 +86,9 @@ def make_dub(rows, model_path, work, video_path):
     for path,start,end in clips: args += ["-i",str(path)]
     for n,(path,start,end) in enumerate(clips, start=1):
         target=max(.12,end-start)
-        # Keep speech natural: speed up only when it exceeds the segment window.
-        # Never slow short clips down, because that makes the voice sound dragged.
+        # Never cut synthesized speech to the original segment duration: translated
+        # text can be longer. Apply only moderate acceleration and let any remaining
+        # speech finish naturally; later segments may overlap slightly rather than vanish.
         ratio=duration(path)/target
         tempos=[]
         while ratio>1.35:
@@ -97,7 +98,7 @@ def make_dub(rows, model_path, work, video_path):
             tempos.append(ratio)
         filters=["aresample=48000","asetpts=PTS-STARTPTS"]
         filters.extend(f"atempo={x:.6f}" for x in tempos)
-        filters += [f"atrim=duration={target:.3f}",f"apad=pad_dur={target:.3f}",f"atrim=duration={target:.3f}",f"adelay={round(start*1000)}:all=1"]
+        filters += [f"adelay={round(start*1000)}:all=1"]
         chain=",".join(filters)
         label=f"a{n}"; graph.append(f"[{n}:a]{chain}[{label}]"); labels.append(f"[{label}]")
     graph.append("".join(labels)+f"amix=inputs={len(labels)}:duration=longest:normalize=0,alimiter=limit=0.95[dub]")
