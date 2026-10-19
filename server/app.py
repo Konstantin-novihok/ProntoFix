@@ -247,15 +247,17 @@ def delete_job(job_id:str):
     return {"status":"deleted","id":job_id}
 
 @app.post("/api/jobs/{job_id}/process")
-def process_job(job_id:str):
+def process_job(job_id:str,data:VariantRequest):
     j=getjob(job_id)
     if not j: raise HTTPException(404,"Видео не найдено")
     if j["status"] in ("queued","processing"): raise HTTPException(409,"Видео уже обрабатывается")
     source=Path(j["input_path"]).resolve()
     if not source.is_file(): raise HTTPException(404,"Исходный видеофайл отсутствует на сервере")
+    target=data.target_language.strip().lower()
+    if target not in LANGS: raise HTTPException(400,"Неподдерживаемый язык перевода")
     with dbconn() as c:
-        c.execute("UPDATE jobs SET status='queued',progress=0,message='В очереди на обработку',updated=? WHERE id=?",(time.time(),job_id))
-    return {"id":job_id,"status":"queued"}
+        c.execute("UPDATE jobs SET target_lang=?,status='queued',progress=0,message=?,updated=? WHERE id=?",(target,f"В очереди на перевод: {LANGS[target]}",time.time(),job_id))
+    return {"id":job_id,"status":"queued","target_language":target}
 
 @app.get("/api/jobs/{job_id}/source-video")
 def source_video(job_id:str):
