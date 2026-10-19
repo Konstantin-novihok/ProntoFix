@@ -216,8 +216,8 @@ def complete(upload_id:str,data:Complete):
                 with part.open("rb") as f:shutil.copyfileobj(f,out,4*1024*1024)
         shutil.rmtree(folder,ignore_errors=True); jid=uuid.uuid4().hex; now=time.time()
         sl=data.source_language if data.source_language in LANGS else None; tl=data.target_language if data.target_language in LANGS else None
-        with dbconn() as c:c.execute("INSERT INTO jobs(id,filename,input_path,source_lang,target_lang,status,progress,message,created,updated) VALUES(?,?,?,?,?,'queued',0,'В очереди',?,?)",(jid,name,str(dest),sl,tl,now,now))
-        return {"id":jid,"status":"queued","filename":name}
+        with dbconn() as c:c.execute("INSERT INTO jobs(id,filename,input_path,source_lang,target_lang,status,progress,message,created,updated) VALUES(?,?,?,?,?,'uploaded',0,'Видео загружено. Просмотр доступен; нажмите «Обработать», чтобы начать перевод.',?,?)",(jid,name,str(dest),sl,tl,now,now))
+        return {"id":jid,"status":"uploaded","filename":name}
     except Exception:dest.unlink(missing_ok=True); raise
 @app.delete("/api/jobs/{job_id}")
 def delete_job(job_id:str):
@@ -245,6 +245,26 @@ def delete_job(job_id:str):
     with dbconn() as c:
         c.execute("DELETE FROM jobs WHERE id=?",(job_id,))
     return {"status":"deleted","id":job_id}
+
+@app.post("/api/jobs/{job_id}/process")
+def process_job(job_id:str):
+    j=getjob(job_id)
+    if not j: raise HTTPException(404,"Видео не найдено")
+    if j["status"] in ("queued","processing"): raise HTTPException(409,"Видео уже обрабатывается")
+    source=Path(j["input_path"]).resolve()
+    if not source.is_file(): raise HTTPException(404,"Исходный видеофайл отсутствует на сервере")
+    with dbconn() as c:
+        c.execute("UPDATE jobs SET status='queued',progress=0,message='В очереди на обработку',updated=? WHERE id=?",(time.time(),job_id))
+    return {"id":job_id,"status":"queued"}
+
+@app.get("/api/jobs/{job_id}/source-video")
+def source_video(job_id:str):
+    j=getjob(job_id)
+    if not j: raise HTTPException(404,"Видео не найдено")
+    source=Path(j["input_path"]).resolve()
+    if not source.is_file(): raise HTTPException(404,"Исходный видеофайл отсутствует на сервере")
+    media_type="video/mp4" if source.suffix.lower()==".mp4" else "application/octet-stream"
+    return FileResponse(source,filename=j["filename"],media_type=media_type,content_disposition_type="inline",headers={"Cache-Control":"no-store"})
 
 @app.post("/api/jobs/{job_id}/variants")
 def create_variant(job_id:str,data:VariantRequest):
