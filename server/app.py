@@ -1,5 +1,5 @@
 from __future__ import annotations
-import json, os, shutil, sqlite3, subprocess, threading, time, uuid
+import json, os, shutil, sqlite3, subprocess, threading, time, uuid, tempfile
 from pathlib import Path
 from typing import Any
 from fastapi import FastAPI, HTTPException, Request
@@ -100,9 +100,27 @@ def make_dub(rows, model_path, work, video_path):
     return audio,out
 def process(j):
     jid=j["id"]; src=Path(j["input_path"]); work=JOBS/jid; work.mkdir(parents=True,exist_ok=True)
+    # Intermediate audio and synthesis chunks live in RAM-backed tmpfs when there is
+    # enough room. Fall back to the system temp directory rather than risking ENOSPC.
+    ram_root=Path("/dev/shm")
+    source_size=src.stat().st_size if src.is_file() else 0
+    try:
+        ram_free=shutil.disk_usage(ram_root).free if ram_root.is_dir() else 0
+    except OSError:
+        ram_free=0
+    temp_root=str(ram_root) if ram_free >= max(512*1024*1024, source_size*2) else None
+    try:
+        with tempfile.TemporaryDirectory(prefix=f"prontofix-{jid[:8]}-", dir=temp_root) as temp_dir:
+            scratch=Path(temp_dir)
+            process_in_ram(j, src, work, scratch)
+    except Exception as e:
+        update(jid,status="error",progress=0,message=str(e))
+
+def process_in_ram(j, src, work, scratch):
+    jid=j["id"]
     try:
         update(jid,status="processing",progress=2,message="Извлечение аудио")
-        wav=work/"source.wav"; cmd(["ffmpeg","-nostdin","-y","-i",str(src),"-vn","-ac","1","-ar","16000","-c:a","pcm_s16le",str(wav)])
+        wav=scratch/"source.wav"; cmd(["ffmpeg","-nostdin","-y","-i",str(src),"-vn","-ac","1","-ar","16000","-c:a","pcm_s16le",str(wav)])
         from faster_whisper import WhisperModel
         update(jid,progress=8,message="Распознавание на CPU")
         model=WhisperModel(MODEL,device="cpu",compute_type="int8",cpu_threads=THREADS,num_workers=1)
@@ -123,8 +141,14 @@ def process(j):
         models=piper_models()
         if shutil.which(PIPER) and target_lang in models and Path(models[target_lang]).is_file():
             update(jid,progress=84,message=f"Синтез речи: {LANGS.get(target_lang,target_lang)}")
-            voice,out=make_dub(translated,models[target_lang],work,src)
-            result.update({"translated_audio":str(voice),"dubbed_video":str(out),"tts_voice_language":target_lang,"dubbing_mode":"segment_aligned"})
+            voice_tmp,out_tmp=make_dub(translated,models[target_lang],scratch,src)
+            # Keep the completed video next to the uploaded original; publish a copy
+            # of the audio artifact in the durable per-job result directory.
+            final_video=src.parent/(src.stem+"_ProntoFix_"+jid[:8]+".mp4")
+            final_audio=work/"translated.wav"
+            shutil.copy2(out_tmp,final_video)
+            shutil.copy2(voice_tmp,final_audio)
+            result.update({"translated_audio":str(final_audio),"dubbed_video":str(final_video),"tts_voice_language":target_lang,"dubbing_mode":"segment_aligned","processing_buffer":"RAM (/dev/shm)" if scratch.parent==Path("/dev/shm") else "temporary disk (RAM buffer had insufficient free space)"})
         else:
             available=", ".join(sorted(k for k,p in models.items() if Path(p).is_file())) or "нет"
             result["tts_warning"]=f"Нет настроенной голосовой модели Piper для языка {target_lang}. Настроены языки: {available}."
