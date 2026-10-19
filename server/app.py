@@ -184,6 +184,8 @@ class Complete(BaseModel):
     source_language:str|None=None; target_language:str|None=None
 class TranscriptEdit(BaseModel):
     text:str=Field(max_length=20000000); translated:bool=False
+class VariantRequest(BaseModel):
+    target_language:str=Field(min_length=2,max_length=8)
 @app.get("/api/health")
 def health():
     models=piper_models()
@@ -241,6 +243,22 @@ def delete_job(job_id:str):
     with dbconn() as c:
         c.execute("DELETE FROM jobs WHERE id=?",(job_id,))
     return {"status":"deleted","id":job_id}
+
+@app.post("/api/jobs/{job_id}/variants")
+def create_variant(job_id:str,data:VariantRequest):
+    """Create an independent translation job for the same uploaded source."""
+    parent=getjob(job_id)
+    if not parent: raise HTTPException(404,"Исходное видео не найдено")
+    source=Path(parent["input_path"]).resolve()
+    if not source.is_file(): raise HTTPException(404,"Исходный видеофайл отсутствует на сервере")
+    target=data.target_language.strip().lower()
+    if target not in LANGS: raise HTTPException(400,"Неподдерживаемый язык перевода")
+    source_lang=parent.get("source_lang") or parent.get("result",{}).get("source_language")
+    now=time.time(); jid=uuid.uuid4().hex
+    with dbconn() as c:
+        c.execute("INSERT INTO jobs(id,filename,input_path,source_lang,target_lang,status,progress,message,created,updated) VALUES(?,?,?,?,?,'queued',0,?,?,?)",
+                  (jid,parent["filename"],str(source),source_lang,target,f"Вариант перевода: {LANGS[target]}",now,now))
+    return {"id":jid,"status":"queued","filename":parent["filename"],"source_job_id":job_id,"target_language":target}
 
 @app.post("/api/jobs/{job_id}/retry")
 def retry_job(job_id:str):
