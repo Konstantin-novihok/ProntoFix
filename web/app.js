@@ -19,16 +19,45 @@ lv:{"Настройки":"Iestatījumi","Язык интерфейса":"Saskarn
 no:{"Настройки":"Innstillinger","Язык интерфейса":"Grensesnittspråk","Цветовая тема":"Fargetema","Сохранить настройки":"Lagre innstillinger","Добавить видео":"Legg til video","Загрузка частями по 8 MiB":"Opplasting i deler på 8 MiB","Выберите видео или аудио":"Velg video eller lyd","Лимит интерфейса: 500 ГБ":"Grensesnittgrense: 500 GB","Язык оригинала":"Kildespråk","Язык перевода":"Målspråk","Автоопределение":"Automatisk gjenkjenning","Загрузить и поставить в очередь":"Last opp og legg i kø","Очередь обработки":"Behandlingskø","Прогресс и результаты":"Fremdrift og resultater","Обновить очередь":"Oppdater kø","Редактор текста":"Tekstredigerer","Оригинал":"Original","Перевод":"Oversettelse","Сохранить исправления":"Lagre endringer","Скачать TXT":"Last ned TXT","Задач пока нет.":"Ingen oppgaver ennå.","В очереди":"I kø","Обработка":"Behandler","Готово":"Ferdig","Ошибка":"Feil","Открыть текст":"Åpne tekst","Результаты":"Resultater","Удалить":"Slett","Повторить обработку":"Prøv behandling på nytt","Обработать / перевести":"Behandle / oversett"}
 };
 function tr(s){const lang=localStorage.getItem("pf-ui")||"ru";return (UI_TEXT[lang]&&UI_TEXT[lang][s])||s}
+const translationOriginalText=new WeakMap();
+const translationOriginalAttrs=new WeakMap();
 function translatePage(){
  const lang=localStorage.getItem("pf-ui")||"ru",map=UI_TEXT[lang]||{};
  document.documentElement.lang=lang;
- if(lang==="ru")return;
+ document.documentElement.dir=lang==="ar"?"rtl":"ltr";
  const entries=Object.entries(map).sort((a,b)=>b[0].length-a[0].length);
- const translate=value=>{let out=value;for(const [from,to] of entries){if(out.includes(from))out=out.split(from).join(to)}return out};
+ const translate=value=>{
+  let out=value;
+  // Normalize text back to the Russian source first, so switching languages
+  // never tries to translate an already translated string.
+  if(lang!=="ru"){
+   for(const [from,to] of entries){if(to&&out.includes(to))out=out.split(to).join(from)}
+   for(const [from,to] of entries){if(out.includes(from))out=out.split(from).join(to)}
+  }else{
+   for(const [from,to] of entries){if(to&&out.includes(to))out=out.split(to).join(from)}
+  }
+  return out;
+ };
  const walker=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT),nodes=[];
  while(walker.nextNode())nodes.push(walker.currentNode);
- for(const n of nodes){if(n.parentElement&&/^(SCRIPT|STYLE|TEXTAREA|INPUT|OPTION)$/i.test(n.parentElement.tagName))continue;const next=translate(n.nodeValue);if(next!==n.nodeValue)n.nodeValue=next}
- document.querySelectorAll("[placeholder],[title],[aria-label],[alt]").forEach(e=>{for(const attr of ["placeholder","title","aria-label","alt"]){const v=e.getAttribute(attr);if(v){const next=translate(v);if(next!==v)e.setAttribute(attr,next)}}});
+ for(const n of nodes){
+  if(!n.parentElement||/^(SCRIPT|STYLE|TEXTAREA|INPUT|OPTION)$/i.test(n.parentElement.tagName))continue;
+  const current=n.nodeValue;
+  let state=translationOriginalText.get(n);
+  if(!state||current!==state.lastApplied)state={original:current,lastApplied:current};
+  const next=translate(state.original);
+  state.lastApplied=next;translationOriginalText.set(n,state);
+  if(next!==current)n.nodeValue=next;
+ }
+ document.querySelectorAll("[placeholder],[title],[aria-label],[alt]").forEach(e=>{
+  let states=translationOriginalAttrs.get(e);if(!states){states={};translationOriginalAttrs.set(e,states)}
+  for(const attr of ["placeholder","title","aria-label","alt"]){
+   const current=e.getAttribute(attr);if(!current)continue;
+   let state=states[attr];if(!state||current!==state.lastApplied)state={original:current,lastApplied:current};
+   const next=translate(state.original);state.lastApplied=next;states[attr]=state;
+   if(next!==current)e.setAttribute(attr,next);
+  }
+ });
 }
 let translationObserver;
 function watchTranslations(){
