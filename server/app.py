@@ -93,7 +93,7 @@ def make_dub(rows, model_path, work, video_path):
         label=f"a{n}"; graph.append(f"[{n}:a]{chain}[{label}]"); labels.append(f"[{label}]")
     graph.append("".join(labels)+f"amix=inputs={len(labels)}:duration=longest:normalize=0,alimiter=limit=0.95[dub]")
     out=work/"video_translated_audio.mp4"
-    args += ["-filter_complex",";".join(graph),"-map","0:v:0","-map","[dub]","-c:v","copy","-c:a","aac","-b:a","192k","-t",f"{duration(video_path):.3f}","-movflags","+faststart",str(out)]
+    args += ["-filter_complex",";".join(graph),"-map","0:v:0","-map","[dub]","-c:v","libx264","-preset","veryfast","-crf","23","-pix_fmt","yuv420p","-c:a","aac","-b:a","192k","-t",f"{duration(video_path):.3f}","-movflags","+faststart",str(out)]
     cmd(args)
     audio=work/"translated.wav"
     cmd(["ffmpeg","-nostdin","-y","-i",str(out),"-vn","-ac","1","-ar","22050","-c:a","pcm_s16le",str(audio)])
