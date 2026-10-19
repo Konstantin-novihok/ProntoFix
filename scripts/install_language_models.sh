@@ -75,7 +75,7 @@ while api:
     paths.extend(x.get("path","") for x in entries if x.get("type")=="file")
     page_count += 1
     import re
-    match=re.search(r'<([^>]+)>\\s*;\\s*rel="next"',link)
+    match=re.search(r'<([^>]+)>\s*;\s*rel="next"',link)
     api=match.group(1) if match else None
     print(f"Inventory page {page_count}: {len(paths)} files indexed",flush=True)
 print("Total remote files indexed:",len(paths),flush=True)
